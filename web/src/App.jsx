@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { api } from './lib/api.js';
+import { api, setToken } from './lib/api.js';
 import { ToastProvider, useToast, Loading, Modal } from './lib/ui.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -80,7 +80,6 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [workspaces, setWorkspaces] = useState([]);
   const [wsId, setWsIdState] = useState(localStorage.getItem('kr_ws') || null);
-  const toast = useToast();
   const nav = useNavigate();
 
   const refreshWorkspaces = async () => {
@@ -91,18 +90,23 @@ export default function App() {
   };
   const setWsId = (id) => { setWsIdState(id); localStorage.setItem('kr_ws', id || ''); };
 
+  const doLogin = async (u) => {
+    setUser(u);
+    try { await refreshWorkspaces(); } catch { /* workspace errors must not block entry */ }
+    nav('/', { replace: true });
+  };
+
   useEffect(() => {
     api.get('/auth/me')
-      .then(r => { if (r.user) { setUser(r.user); refreshWorkspaces(); } else nav('/login'); })
-      .catch(() => nav('/login'))
-      .finally(() => setBooting(false));
+      .then(r => { if (r.user) doLogin(r.user); else setBooting(false); })
+      .catch(() => setBooting(false));
     const on401 = () => { setUser(null); nav('/login'); };
     window.addEventListener('kr:unauthorized', on401);
     return () => window.removeEventListener('kr:unauthorized', on401);
   }, []);
 
   if (booting) return <Loading label="Starting KavachRecon…" />;
-  if (!user) return <Login onLogin={(u) => { setUser(u); refreshWorkspaces(); nav('/'); }} />;
+  if (!user) return <Login onLogin={doLogin} />;
 
   return (
     <AppCtx.Provider value={{ user, workspaces, wsId, setWsId, refreshWorkspaces }}>

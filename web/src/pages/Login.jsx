@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../lib/api.js';
+import { api, setToken } from '../lib/api.js';
 
 export default function Login({ onLogin }) {
   const [users, setUsers] = useState([]);
@@ -9,8 +9,11 @@ export default function Login({ onLogin }) {
   useEffect(() => { api.get('/auth/users').then(setUsers).catch(e => setErr(e.message)); }, []);
   const signIn = async (u) => {
     setBusy(u.id);
-    try { onLogin(await api.post('/auth/login', { user_id: u.id })); }
-    catch (e) { setErr(e.message); } finally { setBusy(null); }
+    try {
+      const me = await api.post('/auth/login', { user_id: u.id });
+      if (me.token) setToken(me.token); // header auth for embedded previews
+      onLogin(me);
+    } catch (e) { setErr(e.message); } finally { setBusy(null); }
   };
 
   return (

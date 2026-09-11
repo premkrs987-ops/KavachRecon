@@ -19,9 +19,10 @@ router.post('/auth/login', (req, res) => {
   const { user_id } = req.body || {};
   let user = user_id ? q1(`SELECT * FROM users WHERE id = ?`, [user_id]) : q1(`SELECT * FROM users ORDER BY created_at LIMIT 1`);
   if (!user) return res.status(404).json({ error: 'no_user' });
-  createSession(res, user.id);
+  const token = createSession(res, user.id);
   audit(user.name, 'auth.login', 'user', user.id, { passwordless: true });
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+  // token is returned so embedded previews (blocked cookies) can use header auth
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, token });
 });
 router.post('/auth/logout', (req, res) => { destroySession(req, res); res.json({ ok: true }); });
 router.get('/auth/me', (req, res) => res.json({ user: req.user || null }));
