@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Routes, Route, NavLink, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { api, setToken } from './lib/api.js';
-import { ToastProvider, useToast, Loading, Modal } from './lib/ui.jsx';
-import Login from './pages/Login.jsx';
+import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
+import { api, setToken, store } from './lib/api.js';
+import { ToastProvider, Loading } from './lib/ui.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Targets from './pages/Targets.jsx';
 import Scans from './pages/Scans.jsx';
@@ -47,6 +46,7 @@ function Shell({ children }) {
   const title = NAV.find(n => n.to === loc.pathname)?.label || (loc.pathname.startsWith('/scans/') ? 'Scan Detail' : 'KavachRecon');
   return (
     <div className="shell">
+      {open && <div className="sideback" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="logo">
           <svg width="30" height="30" viewBox="0 0 24 24"><path fill="#0e9384" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" /><path fill="#0b1220" d="M11 14.8l-2.8-2.8 1.4-1.4 1.4 1.4 4-4 1.4 1.4z" /></svg>
@@ -59,12 +59,12 @@ function Shell({ children }) {
       </aside>
       <div className="main">
         <div className="topbar">
-          <button className="btn sm ghost menu-btn" onClick={() => setOpen(o => !o)}>☰</button>
+          <button className="btn sm ghost menu-btn" onClick={() => setOpen(o => !o)} aria-label="Menu">☰</button>
           <h1>{title}</h1>
           <span className="crumb">/ {ws?.name}</span>
           <div className="spacer" />
           {ws?.is_demo === 1 && <span className="badge b-demo">DEMO WORKSPACE</span>}
-          <select className="wsselect" value={wsId || ''} onChange={e => setWsId(e.target.value)}>
+          <select className="wsselect" value={wsId || ''} onChange={e => setWsId(e.target.value)} aria-label="Workspace">
             {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}{w.is_demo ? ' (demo)' : ''}</option>)}
           </select>
           <div className="avatar" title={user?.name}>{(user?.name || '?').split(' ').map(x => x[0]).slice(0, 2).join('')}</div>
@@ -78,9 +78,9 @@ function Shell({ children }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState(null);
   const [workspaces, setWorkspaces] = useState([]);
-  const [wsId, setWsIdState] = useState(localStorage.getItem('kr_ws') || null);
-  const nav = useNavigate();
+  const [wsId, setWsIdState] = useState(store.get('kr_ws') || null);
 
   const refreshWorkspaces = async () => {
     const ws = await api.get('/workspaces');
@@ -88,41 +88,58 @@ export default function App() {
     setWsIdState(cur => (ws.find(w => w.id === cur) ? cur : ws[0]?.id || null));
     return ws;
   };
-  const setWsId = (id) => { setWsIdState(id); localStorage.setItem('kr_ws', id || ''); };
+  const setWsId = (id) => { setWsIdState(id); store.set('kr_ws', id || ''); };
 
-  const doLogin = async (u) => {
-    setUser(u);
-    try { await refreshWorkspaces(); } catch { /* workspace errors must not block entry */ }
-    nav('/', { replace: true });
+  const applyUser = (u) => { if (u?.token) setToken(u.token); setUser(u); };
+
+  /** No login screen by design: silently establish a session, then load the dashboard. */
+  const establishSession = async () => {
+    let u = null;
+    try { const me = await api.get('/auth/me'); u = me?.user || null; } catch { u = null; }
+    if (!u) applyUser(await api.post('/auth/auto'));
+    else setUser(u);
   };
 
+  const boot = async () => {
+    setBootError(null); setBooting(true);
+    try {
+      await establishSession();
+      try { await refreshWorkspaces(); } catch { /* non-fatal: dashboard will retry */ }
+    } catch (e) {
+      setBootError(e?.message || 'Could not reach the KavachRecon server.');
+    } finally { setBooting(false); }
+  };
+  useEffect(() => { boot(); }, []);
+
+  // If any API call ever 401s, silently re-establish the session instead of bouncing out.
   useEffect(() => {
-    api.get('/auth/me')
-      .then(r => { if (r.user) doLogin(r.user); else setBooting(false); })
-      .catch(() => setBooting(false));
-    let checking = false;
+    let busy = false;
     const on401 = async () => {
-      if (checking) return;
-      checking = true;
-      try {
-        const me = await api.get('/auth/me');
-        if (me.user) return; // session is actually alive — transient 401, ignore
-      } catch { /* truly unauthenticated */ } finally { checking = false; }
-      setToken('');
-      setUser(null);
-      nav('/login');
+      if (busy) return; busy = true;
+      try { await establishSession(); await refreshWorkspaces(); }
+      catch { setBootError('Session could not be restored.'); setUser(null); }
+      finally { busy = false; }
     };
     window.addEventListener('kr:unauthorized', on401);
     return () => window.removeEventListener('kr:unauthorized', on401);
   }, []);
 
   if (booting) return <Loading label="Starting KavachRecon…" />;
-  if (!user) return <Login onLogin={doLogin} />;
+  if (bootError) return (
+    <div className="login-wrap">
+      <div className="login-card" style={{ textAlign: 'center' }}>
+        <svg width="34" height="34" viewBox="0 0 24 24" style={{ margin: '0 auto 10px' }}><path fill="#0e9384" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" /></svg>
+        <h2 style={{ margin: '0 0 8px' }}>KavachRecon</h2>
+        <div className="callout danger" style={{ marginBottom: 14, textAlign: 'left' }}>{bootError}</div>
+        <button className="btn primary" onClick={boot}>Retry</button>
+      </div>
+    </div>
+  );
+  if (!user) return <Loading label="Preparing session…" />;
 
   return (
     <AppCtx.Provider value={{ user, workspaces, wsId, setWsId, refreshWorkspaces }}>
       <Routes>
-        <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Shell>
           <Routes>
             <Route path="/" element={<Dashboard />} />

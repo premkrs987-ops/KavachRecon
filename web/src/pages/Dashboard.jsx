@@ -12,16 +12,25 @@ export default function Dashboard() {
   const { wsId, workspaces } = useApp();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     if (!wsId) return;
-    try { setData(await api.get(`/dashboard?workspace_id=${wsId}`)); } catch { /* toast-free poll */ } finally { setLoading(false); }
+    try { setData(await api.get(`/dashboard?workspace_id=${wsId}`)); setError(null); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
   }, [wsId]);
   useEffect(() => { setLoading(true); load(); }, [load]);
   usePoll(load, 4000, !!wsId);
 
   if (loading && !data) return <div className="grid g4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} h={72} />)}</div>;
-  if (!data) return <Empty title="No workspace selected" hint="Create or select a workspace to see intelligence." />;
+  if (!data) return (
+    <div className="card">
+      <Empty icon="📡" title={error ? 'Dashboard could not load' : 'No workspace selected'}
+        hint={error || 'Create or select a workspace to see intelligence.'}
+        action={<button className="btn primary" onClick={() => { setLoading(true); load(); }}>Retry now</button>} />
+    </div>
+  );
   const t = data.totals;
   const openScans = data.latest_scans.filter(s => ['QUEUED', 'RUNNING'].includes(s.status)).length;
   const demo = workspaces.find(w => w.id === wsId)?.is_demo === 1;
@@ -54,7 +63,7 @@ export default function Dashboard() {
         <Stat v={t.js_secrets} l="JS secret patterns" accent={t.js_secrets ? 'var(--gold)' : null} />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1.35fr 1fr', }}>
+      <div className="grid split">
         <div className="card">
           <div className="row" style={{ marginBottom: 8 }}>
             <h3 style={{ margin: 0 }}>Risk distribution</h3><div className="spacer" />

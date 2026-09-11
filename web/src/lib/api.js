@@ -1,14 +1,23 @@
 const base = '/api';
 const TOKEN_KEY = 'kr_token';
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY) || '';
-export const setToken = (t) => { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); };
+// Storage that survives restricted environments: falls back to in-memory
+// (per tab session) when localStorage is unavailable (strict iframe privacy modes).
+const mem = {};
+export const store = {
+  get(k) { try { return localStorage.getItem(k) ?? mem[k] ?? ''; } catch { return mem[k] ?? ''; } },
+  set(k, v) { mem[k] = v; try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  del(k) { delete mem[k]; try { localStorage.removeItem(k); } catch { /* private mode */ } },
+};
 
-// Anti-bounce guard: within a few seconds of a successful login, a stray 401
-// (race during first data loads) must never kick the user back to the login screen.
-let lastLoginAt = 0;
-export const markAuthenticated = () => { lastLoginAt = Date.now(); };
-const recentlyLoggedIn = () => Date.now() - lastLoginAt < 6000;
+export const getToken = () => store.get(TOKEN_KEY);
+export const setToken = (t) => { t ? store.set(TOKEN_KEY, t) : store.del(TOKEN_KEY); };
+
+// Anti-bounce guard: within a few seconds of establishing a session, a stray 401
+// (race during first data loads) must never kick the user out.
+let lastAuthAt = 0;
+export const markAuthenticated = () => { lastAuthAt = Date.now(); };
+const recentlyAuthed = () => Date.now() - lastAuthAt < 6000;
 
 function headers() {
   const h = { 'content-type': 'application/json' };
@@ -25,11 +34,11 @@ async function req(path, opts = {}) {
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   if (res.status === 401 && !path.startsWith('/auth')) {
-    if (!recentlyLoggedIn()) {
+    if (!recentlyAuthed()) {
       setToken('');
       window.dispatchEvent(new CustomEvent('kr:unauthorized'));
     }
-    throw new Error('Session expired — sign in again.');
+    throw new Error('Session expired.');
   }
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json().catch(() => ({})) : await res.text();
@@ -65,7 +74,7 @@ export const api = {
   get: (p) => req(p),
   post: async (p, body = {}) => {
     const r = await req(p, { method: 'POST', body });
-    if (p === '/auth/login') markAuthenticated();
+    if (p === '/auth/login' || p === '/auth/auto') markAuthenticated();
     return r;
   },
   patch: (p, body = {}) => req(p, { method: 'PATCH', body }),

@@ -4,7 +4,7 @@ import zlib from 'node:zlib';
 import {
   q, q1, run, now, uid, audit, getSetting, setSetting,
 } from './db.js';
-import { createSession, destroySession, requireAuth } from './auth.js';
+import { createSession, destroySession, requireAuth, ensureDefaultUsers } from './auth.js';
 import { ScanEngine, buildSummary } from './scanner/engine.js';
 import { generateScanReport, diffScans, findPreviousScan } from './report/pdf.js';
 import { generateExecutiveSummary, explainFinding, askScan, surfaceSummary } from './ai/gemini.js';
@@ -22,6 +22,15 @@ router.post('/auth/login', (req, res) => {
   const token = createSession(res, user.id, req);
   audit(user.name, 'auth.login', 'user', user.id, { passwordless: true });
   // token is returned so embedded previews (blocked cookies) can use header auth
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, token });
+});
+// Silent session bootstrap — the SPA has no login screen; it calls this on boot.
+router.post('/auth/auto', (req, res) => {
+  let user = q1(`SELECT * FROM users ORDER BY created_at LIMIT 1`);
+  if (!user) { ensureDefaultUsers(); user = q1(`SELECT * FROM users ORDER BY created_at LIMIT 1`); }
+  if (!user) return res.status(500).json({ error: 'no_user', message: 'Could not initialise default users.' });
+  const token = createSession(res, user.id, req);
+  audit(user.name, 'auth.session_started', 'user', user.id, { passwordless: true, silent: true });
   res.json({ id: user.id, name: user.name, email: user.email, role: user.role, token });
 });
 router.post('/auth/logout', (req, res) => { destroySession(req, res); res.json({ ok: true }); });
