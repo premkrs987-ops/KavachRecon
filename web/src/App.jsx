@@ -100,7 +100,18 @@ export default function App() {
     api.get('/auth/me')
       .then(r => { if (r.user) doLogin(r.user); else setBooting(false); })
       .catch(() => setBooting(false));
-    const on401 = () => { setUser(null); nav('/login'); };
+    let checking = false;
+    const on401 = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const me = await api.get('/auth/me');
+        if (me.user) return; // session is actually alive — transient 401, ignore
+      } catch { /* truly unauthenticated */ } finally { checking = false; }
+      setToken('');
+      setUser(null);
+      nav('/login');
+    };
     window.addEventListener('kr:unauthorized', on401);
     return () => window.removeEventListener('kr:unauthorized', on401);
   }, []);

@@ -4,6 +4,12 @@ const TOKEN_KEY = 'kr_token';
 export const getToken = () => localStorage.getItem(TOKEN_KEY) || '';
 export const setToken = (t) => { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); };
 
+// Anti-bounce guard: within a few seconds of a successful login, a stray 401
+// (race during first data loads) must never kick the user back to the login screen.
+let lastLoginAt = 0;
+export const markAuthenticated = () => { lastLoginAt = Date.now(); };
+const recentlyLoggedIn = () => Date.now() - lastLoginAt < 6000;
+
 function headers() {
   const h = { 'content-type': 'application/json' };
   const t = getToken();
@@ -19,8 +25,10 @@ async function req(path, opts = {}) {
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   if (res.status === 401 && !path.startsWith('/auth')) {
-    setToken('');
-    window.dispatchEvent(new CustomEvent('kr:unauthorized'));
+    if (!recentlyLoggedIn()) {
+      setToken('');
+      window.dispatchEvent(new CustomEvent('kr:unauthorized'));
+    }
     throw new Error('Session expired — sign in again.');
   }
   const ct = res.headers.get('content-type') || '';
@@ -55,7 +63,11 @@ async function download(path) {
 
 export const api = {
   get: (p) => req(p),
-  post: (p, body = {}) => req(p, { method: 'POST', body }),
+  post: async (p, body = {}) => {
+    const r = await req(p, { method: 'POST', body });
+    if (p === '/auth/login') markAuthenticated();
+    return r;
+  },
   patch: (p, body = {}) => req(p, { method: 'PATCH', body }),
   put: (p, body = {}) => req(p, { method: 'PUT', body }),
   del: (p) => req(p, { method: 'DELETE' }),

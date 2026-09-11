@@ -20,13 +20,18 @@ app.use(sessionMiddleware);
 
 app.use('/api', apiRouter);
 
-// static frontend
+// static frontend — hashed assets are immutable; the SPA shell must never be cached
 const PUBLIC_DIR = path.join(__dirname, 'public');
-app.use(express.static(PUBLIC_DIR));
+app.use('/assets', express.static(path.join(PUBLIC_DIR, 'assets'), { maxAge: '365d', immutable: true }));
+app.use(express.static(PUBLIC_DIR, { etag: true, setHeaders: (res, fp) => {
+  if (!fp.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'no-store');
+} }));
 app.get(/^\/(?!api\/).*/, (req, res) => {
   const index = path.join(PUBLIC_DIR, 'index.html');
-  if (fs.existsSync(index)) res.sendFile(index);
-  else res.status(503).send('Frontend not built yet. Run: npm run build');
+  if (fs.existsSync(index)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(index);
+  } else res.status(503).send('Frontend not built yet. Run: npm run build');
 });
 
 // error containment
